@@ -1,0 +1,23 @@
+_BASE_: "../Base-DINOv3-vitb-FPN-SparseRCNN.yaml"
+MODEL:
+  WEIGHTS: ""
+  DINOv3:
+    FREEZE: True
+  BACKBONE:
+    FREEZE: False
+  SparseRCNN:
+    NUM_CLASSES: 25
+    FREEZE_INTERACTION: False
+DATASETS:
+  TRAIN: ('emds7_trainval_base_anno50',)
+  TEST: ('emds7_test_base_anno50',)
+SOLVER:
+  IMS_PER_BATCH: 4
+  BASE_LR: 0.000095  # 0.0001
+  STEPS: (6000, 8200)  # (9000, 13000)
+  MAX_ITER: 10000  # 16000
+  WARMUP_ITERS: 500
+  CHECKPOINT_PERIOD: 5000
+TEST:
+  EVAL_PERIOD: 2000
+OUTPUT_DIR: "checkpoints/emds7/dinov3_vitb_fpn_sparse_base_anno50"

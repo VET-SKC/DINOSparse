@@ -1,0 +1,62 @@
+【Pycharm操作】
+
+更新SSH连接
+
+查看sftp部署设置
+pycharm同步路径，手动同步
+/home/featurize/project_sync
+
+远程conda解释器
+
+
+【线上操作】
+安装完conda环境，解释器二次加载可能需要在服务器终端补充
+conda config --append envs_dirs /home/featurize/work/env
+
+（可选）查看解释器
+conda activate swindct
+（备用）服务器conda位置
+/environment/miniconda3/bin/conda
+
+挪到同步目录，并下载数据集
+cp -r /home/featurize/work/project_sync /home/featurize/project_sync
+
+运行时记得确认手动同步代码
+watch -n 1 nvidia-smi
+
+
+【conda环境安装】
+cd /home/featurize/work
+conda create --prefix /home/featurize/work/env/swindct python=3.8.10
+conda activate /home/featurize/work/env/swindct
+conda install pytorch==1.11.0 torchvision==0.12.0 torchaudio==0.11.0 cudatoolkit=11.3 -c pytorch
+
+# pycocotools
+cd otherpkgs/swindct
+pip install pycocotools-2.0.7-cp38-cp38-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+
+# fvcore
+cd fvcore-main
+python setup.py build --force develop
+
+# detectron2
+cd ../detectron2-main
+pip install -e .
+
+# 在python通过import验证，不报错即可
+--
+
+pip install opencv-python --dry-run
+pip install opencv-python
+pip install scikit-learn --dry-run
+pip install scikit-learn
+
+--
+
+
+【下线时】
+先清理权重，该下载的下载，去掉不要的权重，然后去掉数据集，再挪work
+删除原work
+rm -r /home/featurize/work/project_sync
+把同步目录存到work
+cp -r /home/featurize/project_sync /home/featurize/work/project_sync

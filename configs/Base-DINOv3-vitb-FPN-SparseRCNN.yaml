@@ -1,0 +1,57 @@
+VERSION: 2
+MODEL:
+  META_ARCHITECTURE: "SparseRCNN"
+  BACKBONE:
+    NAME: "build_dinov3_fpn_backbone"
+    FREEZE: False
+  DINOv3:
+    WEIGHTS: "data/pretrain_weights/dinov3-vitb16-pretrain-lvd1689m"  # HF
+    FEATURE_STRATEGY: "multilayer"  # "simple"
+    OUT_INDICES: [8, 10, 12, 12]  # []
+    OUT_FEATURES: []
+    FREEZE: True
+  FPN:
+    OUT_CHANNELS: 256  # =SparseRCNN.HIDDEN_DIM
+    NORM: "LN"
+  PIXEL_MEAN: [123.675, 116.280, 103.530]  # ImageNet RGB
+  PIXEL_STD: [58.395, 57.120, 57.375]
+  ROI_HEADS:
+    IN_FEATURES: ["p2", "p3", "p4", "p5"]  # DynamicHead in-levels
+  ROI_BOX_HEAD:
+    POOLER_RESOLUTION: 7
+    POOLER_TYPE: "ROIAlignV2"
+    POOLER_SAMPLING_RATIO: 0
+  SparseRCNN:
+    HIDDEN_DIM: 256  # =FPN.OUT_CHANNELS
+    NUM_PROPOSALS: 100
+    NUM_HEADS: 6
+    DEEP_SUPERVISION: True
+    USE_FOCAL: True
+DATASETS:
+  TRAIN: ("coco_2017_train",)
+  TEST: ("coco_2017_val",)
+DATALOADER:
+  FILTER_EMPTY_ANNOTATIONS: False
+  NUM_WORKERS: 2  # 4
+SOLVER:
+  IMS_PER_BATCH: 16
+  OPTIMIZER: "ADAMW"
+  WEIGHT_DECAY: 0.0001
+  BASE_LR: 0.000025
+  BACKBONE_MULTIPLIER: 0.8  # FPN lr coefficient
+  STEPS: (210000, 250000)
+  MAX_ITER: 270000
+  WARMUP_FACTOR: 0.01
+  WARMUP_ITERS: 1000
+  CLIP_GRADIENTS:
+    ENABLED: True
+    CLIP_TYPE: "full_model"
+    CLIP_VALUE: 200.0  # 0.01
+    NORM_TYPE: 2.0
+INPUT:
+  FORMAT: "RGB"  # DINOv3 pretrain
+  MIN_SIZE_TRAIN: (512, 576, 640, 704, 768, 800)  # /16
+  MIN_SIZE_TEST: 800  # /16
+  CROP:
+    ENABLED: False
+SEED: 40244023

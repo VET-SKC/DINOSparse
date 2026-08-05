@@ -228,8 +228,11 @@ def main(args):
           f" | IDMAP 前5项={list(idmap.items())[:5]}")
     print(f"target class_logits 输出维度（不含背景）={tar_num}, prior_prob={args.prior_prob}")
 
-    # 清掉 scheduler/optimizer，重置 iteration，保证 few-shot 从 iter 0 起训且不沿用旧优化器状态。
-    for k in ("scheduler", "optimizer"):
+    # 清掉 optimizer/scheduler，重置 iteration，保证 few-shot 从 iter 0 起训且不沿用旧优化器状态。
+    # detectron2 DetectionCheckpointer 把 optimizer/scheduler 包在顶层 'trainer' key 下
+    # - 见 engine/defaults.py: DetectionCheckpointer(..., trainer=weakref.proxy(self))
+    # few-shot 微调走 resume_or_load(resume=False)，只读 model 权重、不读 optimizer/scheduler，可直接删整个 'trainer'
+    for k in ("trainer", "optimizer", "scheduler"):
         if k in ckpt:
             del ckpt[k]
             print(f"已删除 checkpoint 中的 '{k}'")

@@ -247,6 +247,7 @@ class SimpleFeaturePyramid(Backbone):
         top_block=None,
         norm="LN",
         square_pad=0,
+        aux_token_mode="none",
     ):
         """
         Args:
@@ -266,6 +267,7 @@ class SimpleFeaturePyramid(Backbone):
                 its input feature (e.g., p5).
             norm (str): the normalization to use.
             square_pad (int): If > 0, require input images to be padded to specific square size.
+            aux_token_mode: "none"/"cls"/"cls_register"。
         """
         super(SimpleFeaturePyramid, self).__init__()
         assert isinstance(net, Backbone)
@@ -339,6 +341,11 @@ class SimpleFeaturePyramid(Backbone):
         self._size_divisibility = strides[-1]
         self._square_pad = square_pad
 
+        # cls/register共享一个aux_proj
+        self.aux_token_mode = aux_token_mode
+        if aux_token_mode != "none":
+            self.aux_proj = nn.Linear(dim, out_channels)
+
     # 修正（相对 detectron2 原版）：原版 padding_constraints 的 key 拼成 "size_divisiblity"（少一个 i）
     # detectron2 的 ImageList.from_tensors 读的是正确拼写 "size_divisibility"
     # （image_list.py:96 `if "size_divisibility" in padding_constraints`），导致约束失效，
@@ -377,7 +384,13 @@ class SimpleFeaturePyramid(Backbone):
                 top_block_in_feature = results[self._out_features.index(self.top_block.in_feature)]
             results.extend(self.top_block(top_block_in_feature))
         assert len(self._out_features) == len(results)
-        return {f: res for f, res in zip(self._out_features, results)}
+
+        out = {f: res for f, res in zip(self._out_features, results)}
+        if self.aux_token_mode != "none":
+            out["aux_cls"] = self.aux_proj(bottom_up_features["aux_cls"])  # (B, 1, C)
+            if self.aux_token_mode == "cls_register" and "aux_register" in bottom_up_features:
+                out["aux_register"] = self.aux_proj(bottom_up_features["aux_register"])  # (B, num_reg, C)
+        return out
 
 
 class MultilayerFPN(Backbone):
@@ -411,6 +424,7 @@ class MultilayerFPN(Backbone):
         out_feature_names,
         out_channels,
         norm="LN",
+        aux_token_mode="none",
     ):
         """
         Args:
@@ -419,6 +433,7 @@ class MultilayerFPN(Backbone):
                 浅层在前、深层在后。
             out_channels (int): 输出通道（须与 SparseRCNN.HIDDEN_DIM 一致，默认 256）。
             norm (str): stage 内 norm 类型（ViTDet 默认 "LN"）。
+            aux_token_mode: "none"/"cls"/"cls_register"。
         """
         super().__init__()
         assert isinstance(net, Backbone)
@@ -444,17 +459,17 @@ class MultilayerFPN(Backbone):
                     bias=use_bias,
                     norm=get_norm(norm, out_channels),
                 ),
-                Conv2d(
-                    out_channels,
-                    out_channels,
-                    kernel_size=3,
-                    padding=1,
-                    bias=use_bias,
-                    norm=get_norm(norm, out_channels),
-                ),
+                # Conv2d(
+                #     out_channels,
+                #     out_channels,
+                #     kernel_size=3,
+                #     padding=1,
+                #     bias=use_bias,
+                #     norm=get_norm(norm, out_channels),
+                # ),
             )
             weight_init.c2_xavier_fill(layers[0])
-            weight_init.c2_xavier_fill(layers[1])
+            # weight_init.c2_xavier_fill(layers[1])
             self.add_module(f"mlfp_stage{idx}", layers)
             self.stages.append(layers)
 
@@ -470,6 +485,11 @@ class MultilayerFPN(Backbone):
 
         # 记录输入特征数
         self.n_in_features = n_in
+
+        # cls/register共享一个aux_proj
+        self.aux_token_mode = aux_token_mode
+        if aux_token_mode != "none":
+            self.aux_proj = nn.Linear(in_dim, out_channels)
 
     @property
     def size_divisibility(self):
@@ -506,7 +526,14 @@ class MultilayerFPN(Backbone):
             self.stages[2](f_p4),
             self.stages[3](self.downsample(f_p5)),
         ]
-        return {name: res for name, res in zip(self._out_features, results)}
+
+        out = {name: res for name, res in zip(self._out_features, results)}
+        # TODO: token 层级与 RoI 层级对齐问题，目前统一用最后一层，未按 box level 分组配 token。
+        if self.aux_token_mode != "none":
+            out["aux_cls"] = self.aux_proj(bottom_up_features["aux_cls"])  # (B, 1, C)
+            if self.aux_token_mode == "cls_register" and "aux_register" in bottom_up_features:
+                out["aux_register"] = self.aux_proj(bottom_up_features["aux_register"])  # (B, num_reg, C)
+        return out
 
     def output_shape(self):
         return {
@@ -526,13 +553,16 @@ class MultilayerFPN(Backbone):
 #   - FEATURE_STRATEGY（cfg.MODEL.DINOv3.FEATURE_STRATEGY）：用于构造 FPN。
 #     与取层无关，但会校验 OUT_INDICES 产出的 bottom_up 是否满足该 FPN 的输入需求，不满足直接报错。
 #
-# 三种 FPN 构造策略：
+# 两种 FPN 构造策略（FEATURE_STRATEGY）：
 #   - "simple"     （ViTDet 风格）：单输入 → SimpleFeaturePyramid 用 ConvTranspose2d 上/下采样出 P2-P5。
 #                   要求 bottom_up 只输出 1 个 feature。
 #   - "multilayer" （DEIMv2 STA 风格，无融合）：多输入 → MultilayerFPN 每层各自 双线性插值/MaxPool 到目标 stride，层间不融合。
 #                   固定输出 4 尺度 P2-P5；特征数 < 4 时自动复用最后一个。
 #                   允许 bottom_up 输出任意 ≥1 个 feature。
-#   - "full_token" （阶段三预留）：保留 CLS/register，进阶注入检测头。目前与 simple 同路径。
+#
+# 额外 token 选项（AUX_TOKEN_MODE）：
+#   - "none"/"cls"/"cls_register"，DINOv3Backbone 透传原始维度的 token，
+#                                  FPN 类用 aux_proj(Linear) 投影到指定维度，输出 aux_cls/aux_register 进 dict。
 # ------------------------------------------------------------------
 
 
@@ -546,12 +576,14 @@ def build_dinov3_fpn_backbone(cfg, input_shape: ShapeSpec):
     字段：
         cfg.MODEL.DINOv3.WEIGHTS/OUT_INDICES/FREEZE  传给 build_dinov3_backbone（决定取层与冻结）
         cfg.MODEL.DINOv3.FEATURE_STRATEGY            决定 FPN 构造方式（见上方注释）
+        cfg.MODEL.DINOv3.AUX_TOKEN_MODE              额外 token 选项（none/cls/cls_register）
         cfg.MODEL.FPN.OUT_CHANNELS/NORM              FPN 参数
 
     Returns:
-        backbone (Backbone): simple 策略下输出 P2..P5。
+        backbone (Backbone): 输出 P2 - P5，AUX_TOKEN_MODE!=none 时额外含 aux_* 字段。
     """
     strategy = cfg.MODEL.DINOv3.FEATURE_STRATEGY
+    aux_token_mode = cfg.MODEL.DINOv3.AUX_TOKEN_MODE
     out_channels = cfg.MODEL.FPN.OUT_CHANNELS
 
     # OUT_INDICES 由 build_dinov3_backbone 内部处理（空→最后一层，非空→指定层）。
@@ -559,7 +591,7 @@ def build_dinov3_fpn_backbone(cfg, input_shape: ShapeSpec):
     n_out = len(bottom_up._out_features)  # bottom_up 实际输出的 feature 数
 
     # 根据 FEATURE_STRATEGY 构造 FPN，并校验 bottom_up 输出
-    if strategy == "simple" or strategy == "full_token":
+    if strategy == "simple":
         # SimpleFeaturePyramid：单输入 → 上/下采样出 P2/P3/P4/P5
         if n_out != 1:
             raise ValueError(
@@ -575,6 +607,7 @@ def build_dinov3_fpn_backbone(cfg, input_shape: ShapeSpec):
             scale_factors=[4.0, 2.0, 1.0, 0.5],   # stride16 → P2(4)/P3(8)/P4(16)/P5(32)
             norm=cfg.MODEL.FPN.NORM,              # LN
             top_block=None,                       # scale_factors 已含 0.5 产出 P5，无需额外 top block
+            aux_token_mode=aux_token_mode,
         )
         return backbone
     elif strategy == "multilayer":
@@ -592,6 +625,7 @@ def build_dinov3_fpn_backbone(cfg, input_shape: ShapeSpec):
             out_feature_names=in_features,
             out_channels=out_channels,
             norm=cfg.MODEL.FPN.NORM,
+            aux_token_mode=aux_token_mode,
         )
         return backbone
     else:

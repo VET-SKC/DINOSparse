@@ -21,6 +21,7 @@ _CC.MODEL.DINOv3.FREEZE = True                                 # 冻结权重（
 # 分层冻结：
 # -- MODEL.DINOv3.FREEZE      只冻 DINOv3ViT（在 DINOv3Backbone 内部处理，始终为 True）
 # -- MODEL.BACKBONE.FREEZE    连同 FPN 一起冻结（few-shot 微调阶段用）
+_CC.MODEL.DINOv3.AUX_TOKEN_MODE = "none"                       # 额外 token 透传：none/cls/cls_register
 
 # ------------- SparseRCNN ------------- #
 # SparseR-CNN 端到端检测头（无 RPN，learnable object queries + DynamicHead）。
@@ -54,6 +55,14 @@ _CC.MODEL.SparseRCNN.L1_WEIGHT = 5.0               # loss_bbox 权重（也是 m
 _CC.MODEL.SparseRCNN.GIOU_WEIGHT = 2.0             # loss_giou 权重（也是 matcher cost_giou）
 _CC.MODEL.SparseRCNN.NO_OBJECT_WEIGHT = 0.01       # softmax 模式背景类权重（eos_coef）
 
+# ---- aux 层差异化权重（仅 DEEP_SUPERVISION=True 时生效）----
+# 允许浅层级联层产生更大误差；最终层恒为基础权重（最高比重）。
+#   none   : 各 aux 层等权（SparseR-CNN 原版行为）
+#   linear : aux 层权重从 AUX_WEIGHT(最浅) 线性爬坡到 1.0(最深的 aux)
+#            s_i = AUX_WEIGHT + (1 - AUX_WEIGHT) * i / (NUM_HEADS - 1)
+_CC.MODEL.SparseRCNN.AUX_LOSS_MODE = "none"        # none / linear
+_CC.MODEL.SparseRCNN.AUX_WEIGHT = 0.5              # linear 模式最浅层的缩放值 ∈ (0,1]，深层固定1.0
+
 # ---- SparseRCNN 冻结开关（few-shot 微调阶段用）----
 # SparseRCNN 参数按功能分四组（详见 rcnn.py 的 _apply_freeze）：
 #   A proposal queries    init_proposal_boxes / init_proposal_features    → 始终可训练（无开关）             2
@@ -63,6 +72,12 @@ _CC.MODEL.SparseRCNN.NO_OBJECT_WEIGHT = 0.01       # softmax 模式背景类权�
 #                         linear1/linear2 / norm1/norm2/norm3             → 由 FREEZE_INTERACTION 控制     144 24*6
 # 默认 False（基类预训练：全部可训练）；few-shot 微调时可设 True（冻 D，保 A/B/C 学新类）。
 _CC.MODEL.SparseRCNN.FREEZE_INTERACTION = False
+
+# 额外 token 融合方式
+#   "none"      不构造 ctx_attn 模块，跳过 token 交互
+#   "cross_attn" 构造 ctx_attn；proposal(query) × aux token(key/value)，属 D 组
+#                forward 中是否真正执行，取决于 features dict 有无 aux_*
+_CC.MODEL.SparseRCNN.AUX_TOKEN_FUSION = "none"
 
 # ----------- Backbone ----------- #
 _CC.MODEL.BACKBONE.FREEZE = False

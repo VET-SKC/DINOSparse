@@ -7,6 +7,7 @@ MODEL:
   DINOv3:
     WEIGHTS: "data/pretrain_weights/dinov3-vitb16-pretrain-lvd1689m"  # HF
     FEATURE_STRATEGY: "multilayer"  # "simple"
+    AUX_TOKEN_MODE: "cls_register"
     OUT_INDICES: [8, 10, 12, 12]  # []
     OUT_FEATURES: []
     FREEZE: True
@@ -25,7 +26,9 @@ MODEL:
     HIDDEN_DIM: 256  # =FPN.OUT_CHANNELS
     NUM_PROPOSALS: 100
     NUM_HEADS: 6
+    AUX_TOKEN_FUSION: "cross_attn"
     DEEP_SUPERVISION: True
+    AUX_LOSS_MODE: "linear"
     USE_FOCAL: True
 DATASETS:
   TRAIN: ("coco_2017_train",)

@@ -84,7 +84,7 @@ class DynamicHead(nn.Module):
         )
         return box_pooler
 
-    def forward(self, features, init_bboxes, init_features):
+    def forward(self, features, init_bboxes, init_features, context_tokens):
 
         inter_class_logits = []
         inter_pred_bboxes = []
@@ -96,7 +96,9 @@ class DynamicHead(nn.Module):
         proposal_features = init_features.clone()
 
         for rcnn_head in self.head_series:
-            class_logits, pred_bboxes, proposal_features = rcnn_head(features, bboxes, proposal_features, self.box_pooler)
+            class_logits, pred_bboxes, proposal_features = rcnn_head(
+                features, bboxes, proposal_features, self.box_pooler, context_tokens
+            )
 
             if self.return_intermediate:
                 inter_class_logits.append(class_logits)
@@ -119,6 +121,11 @@ class RCNNHead(nn.Module):
 
         # dynamic.
         self.self_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout)
+        self.aux_token_fusion = cfg.MODEL.SparseRCNN.AUX_TOKEN_FUSION
+        if self.aux_token_fusion == "cross_attn":
+            self.ctx_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout)
+            self.norm_ctx = nn.LayerNorm(d_model)
+            self.dropout_ctx = nn.Dropout(dropout)
         self.inst_interact = DynamicConv(cfg)
 
         self.linear1 = nn.Linear(d_model, dim_feedforward)
@@ -162,10 +169,11 @@ class RCNNHead(nn.Module):
         self.scale_clamp = scale_clamp
         self.bbox_weights = bbox_weights
 
-    def forward(self, features, bboxes, pro_features, pooler):
+    def forward(self, features, bboxes, pro_features, pooler, context_tokens):
         """
         :param bboxes: (N, nr_boxes, 4)
         :param pro_features: (N, nr_boxes, d_model)
+        :param context_tokens: (N, num_tokens, d_model) 或 None。
         """
 
         N, nr_boxes = bboxes.shape[:2]
@@ -182,6 +190,14 @@ class RCNNHead(nn.Module):
         pro_features2 = self.self_attn(pro_features, pro_features, value=pro_features)[0]
         pro_features = pro_features + self.dropout1(pro_features2)
         pro_features = self.norm1(pro_features)
+
+        # proposal(query) × context token(key/value)
+        # context_tokens: (N, num_tokens, d_model) → permute 成 (num_tokens, N, d_model) 作为 K/V
+        if self.aux_token_fusion == "cross_attn" and context_tokens is not None:
+            ctx_kv = context_tokens.permute(1, 0, 2)
+            pro_features2 = self.ctx_attn(pro_features, ctx_kv, value=ctx_kv)[0]
+            pro_features = pro_features + self.dropout_ctx(pro_features2)
+            pro_features = self.norm_ctx(pro_features)
 
         # inst_interact.
         pro_features = pro_features.view(nr_boxes, N, self.d_model).permute(1, 0, 2).reshape(1, N * nr_boxes, self.d_model)

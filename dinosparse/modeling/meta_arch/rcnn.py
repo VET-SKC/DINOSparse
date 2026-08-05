@@ -40,6 +40,8 @@ class SparseRCNN(nn.Module):
         self.hidden_dim = cfg.MODEL.SparseRCNN.HIDDEN_DIM
         # DynamicHead 的 ROIPooler 只在这些 level 上提取特征（与 ROI_HEADS.IN_FEATURES 一致）
         self.in_features = list(cfg.MODEL.ROI_HEADS.IN_FEATURES)
+        # 额外 token 融合方式
+        self.aux_token_fusion = cfg.MODEL.SparseRCNN.AUX_TOKEN_FUSION
 
         # learnable object queries：N 个可学习的 proposal boxes（cxcywh, 归一化到 0~1）
         self.init_proposal_features = nn.Embedding(self.num_proposals, self.hidden_dim)
@@ -52,6 +54,8 @@ class SparseRCNN(nn.Module):
 
         self.num_heads = cfg.MODEL.SparseRCNN.NUM_HEADS
         self.deep_supervision = cfg.MODEL.SparseRCNN.DEEP_SUPERVISION
+        self.aux_loss_mode = cfg.MODEL.SparseRCNN.AUX_LOSS_MODE
+        self.aux_weight = cfg.MODEL.SparseRCNN.AUX_WEIGHT
         self.use_focal = cfg.MODEL.SparseRCNN.USE_FOCAL
         self.class_weight = cfg.MODEL.SparseRCNN.CLASS_WEIGHT
         self.giou_weight = cfg.MODEL.SparseRCNN.GIOU_WEIGHT
@@ -66,13 +70,22 @@ class SparseRCNN(nn.Module):
                                         use_focal=self.use_focal)
 
         # weight_dict
+        # 最终层（loss_ce/loss_bbox/loss_giou）恒为基础权重，aux 层按 AUX_LOSS_MODE 缩放。
         weight_dict = {"loss_ce": self.class_weight,
                        "loss_bbox": self.l1_weight,
                        "loss_giou": self.giou_weight}
         if self.deep_supervision:
+            mode, aux_w = self.aux_loss_mode, self.aux_weight
+            assert mode in ("none", "linear"), f"未知 AUX_LOSS_MODE: {mode}"
+            assert 0 < aux_w <= 1, f"AUX_WEIGHT 须 ∈ (0,1]，得到 {aux_w}"
+            N = self.num_heads
             aux_weight_dict = {}
-            for i in range(self.num_heads - 1):
-                aux_weight_dict.update({k + f"_{i}": v for k, v in weight_dict.items()})
+            for i in range(N - 1):  # i=0(最浅aux) .. N-2(最深aux) | N-1(最终层)
+                if mode == "linear":
+                    s = aux_w + (1 - aux_w) * i / (N - 1)
+                else:  # SparseRCNN
+                    s = 1.0
+                aux_weight_dict.update({k + f"_{i}": v * s for k, v in weight_dict.items()})
             weight_dict.update(aux_weight_dict)
 
         losses = ["labels", "boxes"]
@@ -130,6 +143,18 @@ class SparseRCNN(nn.Module):
         features = self.backbone(images.tensor)
         features_list = [features[f] for f in self.in_features]
 
+        # aux_cls 和 aux_register 沿 token 维拼接
+        # 只有 head 启用融合（aux_token_fusion != none）且 features dict 含有 aux_* 时才拼装
+        context_tokens = None
+        if self.aux_token_fusion != "none":
+            aux_parts = []
+            if "aux_cls" in features:
+                aux_parts.append(features["aux_cls"])
+            if "aux_register" in features:
+                aux_parts.append(features["aux_register"])
+            if aux_parts:
+                context_tokens = torch.cat(aux_parts, dim=1)   # (B, num_tokens, dim)
+
         # proposal boxes 初始为归一化 cxcywh，乘以图像尺寸 → 像素坐标（DynamicHead 在像素坐标下工作）
         proposal_boxes = self.init_proposal_boxes.weight.clone()
         proposal_boxes = box_cxcywh_to_xyxy(proposal_boxes)
@@ -138,7 +163,7 @@ class SparseRCNN(nn.Module):
         # DynamicHead：第三参数是 init_proposal_features.weight (N, d_model)，无需 unsqueeze。
         # 只传 in_features 对应的 feature（顺序/数量须与 ROIPooler 的 pooler_scales 一致）。
         outputs_class, outputs_coord = self.head(
-            features_list, proposal_boxes, self.init_proposal_features.weight
+            features_list, proposal_boxes, self.init_proposal_features.weight, context_tokens
         )
         output = {'pred_logits': outputs_class[-1], 'pred_boxes': outputs_coord[-1]}
 

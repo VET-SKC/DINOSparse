@@ -33,7 +33,10 @@ _DEL_/
 exp/
 checkpoints/
 data/pretrain_weights/
-datasets/
+datasets/CIFAR10
+datasets/EMDS7
+datasets/emds7split
+datasets/NYUDepthV2
 
 #
 detectron2-main.zip

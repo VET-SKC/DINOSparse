@@ -88,6 +88,41 @@ _CC.MODEL.ROI_HEADS.NAME = "StandardROIHeads"           # 占位
 _CC.MODEL.ROI_BOX_HEAD.NAME = "FastRCNNConvFCHead"      # 占位
 _CC.MODEL.ROI_BOX_HEAD.POOLER_RESOLUTION = 7
 
+# ---------- Mono Depth ----------- #
+# 单目深度估计(头) meta-arch（FPN 多尺度特征 → 渐进式上采样解码器 → 逐像素 1 通道深度）
+_CC.MODEL.MONO_DEPTH = CN()
+_CC.MODEL.MONO_DEPTH.NUM_DECODER_LAYERS = 4       # 解码器层数（对应融合 P5→P2 的逐级上采样）
+_CC.MODEL.MONO_DEPTH.OUTPUT_SCALE = 1.0           # 最终上采样倍率相对原图，1.0 = 输出原图分辨率
+_CC.MODEL.MONO_DEPTH.FEATURE_STRIDE = 4           # 最精细输入特征 stride（P2=4），用于对齐 GT
+_CC.MODEL.MONO_DEPTH.USE_GRAD_MATCH = True        # 是否启用梯度匹配 loss（log-depth x/y 梯度 L1）
+_CC.MODEL.MONO_DEPTH.SILOG_WEIGHT = 1.0           # scale-invariant log loss 权重
+_CC.MODEL.MONO_DEPTH.GRAD_MATCH_WEIGHT = 0.15     # 梯度匹配 loss 权重（USE_GRAD_MATCH=True 时生效）
+_CC.MODEL.MONO_DEPTH.MIN_DEPTH = 0.001            # 计算 loss 时深度下限（米），<=此值视为无效
+_CC.MODEL.MONO_DEPTH.MAX_DEPTH = 10.0             # 计算 loss 时深度上限（米），NYU 上限约 10m
+# 尺度漂移修复 - 损失
+# scale_loss = |mean_valid(log_pred − log_gt)|，修正 SILog 在 sqrt(mean(d²)−mean(d)²) 里被 mean(d)² 抵消掉的尺度项；
+# pred=c·gt 时 = |log(c)|，最小点在 c=1。与 SILog/grad_match 正交。
+_CC.MODEL.MONO_DEPTH.USE_SCALE_LOSS = True        # 是否启用尺度感知 loss
+_CC.MODEL.MONO_DEPTH.SCALE_LOSS_WEIGHT = 0.5      # 尺度感知 loss 权重（USE_SCALE_LOSS=True 时生效）
+# 尺度漂移修复 - 评测
+# SILog / gradient_matching 都与尺度无关，模型会收敛到 pred≈c·gt
+# 评测时逐图用 GT 中位数把 c 重新缩放，衡量"相对深度精度"
+_CC.MODEL.MONO_DEPTH.EVAL_MEDIAN_ALIGN = False    # 是否启用 median(gt)/median(pred) 尺度对齐
+_CC.MODEL.MONO_DEPTH.EVAL_CROP = False            # 是否启用 NYU 中心裁剪
+
+# ----------- Sem Seg ------------- #
+# 语义分割(头) meta-arch（FPN 多尺度特征 → 渐进式上采样解码器 → 逐像素分类）
+# 默认 NYU Depth V2 的 40 类语义标注（labels40，值 0=void，1–40=类）
+_CC.MODEL.SEM_SEG = CN()
+_CC.MODEL.SEM_SEG.NUM_CLASSES = 40                # 类别数（不含 void，void 单独用 IGNORE_INDEX 排除）
+_CC.MODEL.SEM_SEG.NUM_DECODER_LAYERS = 4          # 解码器层数（对应融合 P5→P2 的逐级上采样）
+_CC.MODEL.SEM_SEG.OUTPUT_SCALE = 1.0              # 最终上采样倍率相对原图，1.0 = 输出原图分辨率
+_CC.MODEL.SEM_SEG.CE_WEIGHT = 1.0                 # CrossEntropy loss 权重
+_CC.MODEL.SEM_SEG.DICE_WEIGHT = 1.0               # Dice loss 权重
+# NYU labels40 原始编码 0=void 1-40=类；meta_arch 内部会把 GT 整体 -1 映射成 0-39
+# IGNORE_INDEX=-1（void 从0变为-1）
+_CC.MODEL.SEM_SEG.IGNORE_INDEX = -1
+
 # ------------ Other ------------- #
 _CC.SOLVER.WEIGHT_DECAY = 5e-5
 # AdamW 是集合预测的推荐优化器，传统 RCNN 仍可用 SGD。

@@ -1,0 +1,20 @@
+_BASE_: "../Base-DINOv3-vitb-FPN-MonoDepth.yaml"
+MODEL:
+  WEIGHTS: ""
+  DINOv3:
+    FREEZE: True
+  BACKBONE:
+    FREEZE: False
+DATASETS:
+  TRAIN: ("nyu_depth_train",)
+  TEST: ("nyu_depth_test",)
+SOLVER:
+  IMS_PER_BATCH: 1
+  BASE_LR: 0.00005  #
+  STEPS: (6000, 9000)
+  MAX_ITER: 12000
+  WARMUP_ITERS: 500
+  CHECKPOINT_PERIOD: 5000
+TEST:
+  EVAL_PERIOD: 2000
+OUTPUT_DIR: "checkpoints/nyu_depth/dinov3_vitb_fpn_monodepth"

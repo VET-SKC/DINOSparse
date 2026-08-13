@@ -47,7 +47,7 @@ lr 在 step 内部生效，只缩放梯度能产生的作用，不改变梯度�
 from __future__ import annotations
 
 import logging
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import torch
 
@@ -114,7 +114,7 @@ class GradNormStats:
             # 各角色梯度贡献（能量占比 = 角色范数² / 全局范数²）
             # contrib[role] = {"lr":..., "n_elem":..., "grad_norm":...}
             if self.last_contrib:
-                order = ["backbone", "proposal", "head", "unknown"]
+                order = ["backbone", "proposal", "head", "decoder", "unknown"]
                 parts = []
                 for role in order:
                     if role not in self.last_contrib:
@@ -126,14 +126,16 @@ class GradNormStats:
                     logger.info(f"[contrib] {' | '.join(parts)}")
 
 
-def _build_role_map(model) -> dict[int, str]:
+def _build_role_map_rcnn(model) -> dict[int, str]:
     """
     建立 Parameter 对象 id → 角色名 的映射，用于按角色统计梯度贡献。
+    SparseRCNN：backbone / proposal / head / unknown。
 
-    角色划分（按参数名 key 的子串匹配，对齐 build_optimizer 的分组逻辑）：
+    按 key 子串匹配，对齐 build_optimizer 的分组逻辑：
       - "backbone" in key       → backbone（lr=BASE_LR×BACKBONE_MULTIPLIER）
       - "init_proposal" in key  → proposal（learnable query/box embeddings）
-      - 其余（"head" 等）        → head   （lr=BASE_LR）
+      - "head" in key           → head   （head_series.* 等，lr=BASE_LR）
+      - 其余                    → unknown
 
     用 id(param) 作 key：DDP 包装后 optimizer.param_groups 里的参数对象与
     model.named_parameters() 返回的是同一对象（DDP 不复制参数），id 可一一对应。
@@ -151,6 +153,73 @@ def _build_role_map(model) -> dict[int, str]:
             role = "unknown"
         role_map[id(p)] = role
     return role_map
+
+
+def _build_role_map_seg(model) -> dict[int, str]:
+    """
+    SemSegMetaArch：backbone / decoder / unknown。
+
+    SemSeg 只有 self.backbone + self.decoder(FPNDecoder)。
+    注意 FPNDecoder 内部还有一个叫 self.head 的子模块，参数名形如 decoder.head.* 会含子串 "head"
+    这里用 "decoder" 子串优先覆盖，避免被误判进 RCNN 风格的 head 桶
+    （否则 decoder.head.* → head，而 decoder.blocks.*/fuse.* → unknown）
+    """
+    base = getattr(model, "module", model)
+    role_map: dict[int, str] = {}
+    for key, p in base.named_parameters(recurse=True):
+        if "backbone" in key:
+            role = "backbone"
+        elif "decoder" in key:
+            role = "decoder"
+        else:
+            role = "unknown"
+        role_map[id(p)] = role
+    return role_map
+
+
+def _build_role_map_depth(model) -> dict[int, str]:
+    """
+    MonoDepthMetaArch：backbone / decoder / unknown（目前与 SemSeg 同构）。
+    """
+    base = getattr(model, "module", model)
+    role_map: dict[int, str] = {}
+    for key, p in base.named_parameters(recurse=True):
+        if "backbone" in key:
+            role = "backbone"
+        elif "decoder" in key:
+            role = "decoder"
+        else:
+            role = "unknown"
+        role_map[id(p)] = role
+    return role_map
+
+
+# 按 meta-arch 类名注册表分发
+# 每个 meta-arch 对应一个 role-map 构建器
+# 未知模型回退到 rcnn 的通用子串映射并告警
+_ROLE_MAP_BUILDERS: dict[str, Callable[[Any], dict[int, str]]] = {
+    "SparseRCNN": _build_role_map_rcnn,
+    "SemSegMetaArch": _build_role_map_seg,
+    "MonoDepthMetaArch": _build_role_map_depth,
+}
+
+
+def _build_role_map(model) -> dict[int, str]:
+    """
+    根据 meta-arch 选择对应的角色映射；未知模型回退到通用子串映射并告警。
+
+    用 id(param) 作 key 的理由同 _build_role_map_rcnn：DDP 不复制参数对象，
+    optimizer.param_groups 里的 param 与 named_parameters() 返回的是同一对象。
+    """
+    base = getattr(model, "module", model)  # 去掉 DDP / DataParallel 外壳
+    builder = _ROLE_MAP_BUILDERS.get(type(base).__name__)
+    if builder is None:
+        logger.warning(
+            f"[gradclip] 未知 meta-arch '{type(base).__name__}'，"
+            f"回退到通用子串映射（backbone/proposal/head/unknown），角色统计可能不准。"
+        )
+        return _build_role_map_rcnn(model)
+    return builder(model)
 
 
 def install_gradnorm_logger(trainer, every_n: int = 20) -> Optional[GradNormStats]:

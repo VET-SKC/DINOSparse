@@ -1,0 +1,56 @@
+VERSION: 2
+MODEL:
+  META_ARCHITECTURE: "MonoDepthMetaArch"
+  BACKBONE:
+    NAME: "build_dinov3_fpn_backbone"
+    FREEZE: False
+  DINOv3:
+    WEIGHTS: "data/pretrain_weights/dinov3-vitb16-pretrain-lvd1689m"
+    FEATURE_STRATEGY: "multilayer"
+    AUX_TOKEN_MODE: "cls_register"
+    OUT_INDICES: [8, 10, 12, 12]
+    OUT_FEATURES: []
+    FREEZE: True
+  FPN:
+    OUT_CHANNELS: 256
+    NORM: "LN"
+  PIXEL_MEAN: [123.675, 116.280, 103.530]   # ImageNet RGB
+  PIXEL_STD: [58.395, 57.120, 57.375]
+  MONO_DEPTH:
+    NUM_DECODER_LAYERS: 4
+    OUTPUT_SCALE: 1.0
+    USE_GRAD_MATCH: True
+    SILOG_WEIGHT: 1.0
+    GRAD_MATCH_WEIGHT: 0.15
+    MIN_DEPTH: 0.001
+    MAX_DEPTH: 10.0
+    USE_SCALE_LOSS: True
+    SCALE_LOSS_WEIGHT: 0.5
+DATASETS:
+  TRAIN: ("coco_2017_train",)
+  TEST: ("coco_2017_val",)
+DATALOADER:
+  FILTER_EMPTY_ANNOTATIONS: False  # NIL
+  NUM_WORKERS: 2
+SOLVER:
+  IMS_PER_BATCH: 16
+  OPTIMIZER: "ADAMW"
+  WEIGHT_DECAY: 0.0001
+  BASE_LR: 0.00005
+  BACKBONE_MULTIPLIER: 0.75  # FPN lr coefficient
+  STEPS: (15000, 20000)
+  MAX_ITER: 25000
+  WARMUP_FACTOR: 0.01
+  WARMUP_ITERS: 1000
+  CLIP_GRADIENTS:
+    ENABLED: True
+    CLIP_TYPE: "full_model"
+    CLIP_VALUE: 20.0
+    NORM_TYPE: 2.0
+INPUT:
+  FORMAT: "RGB"  # DINOv3 pretrain
+  MIN_SIZE_TRAIN: (480, 576, 640)  # /16 NYU 480×640
+  MIN_SIZE_TEST: 480  # /16
+  CROP:
+    ENABLED: False
+SEED: 40244024

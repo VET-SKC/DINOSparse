@@ -29,6 +29,18 @@ class Trainer(DefaultTrainer):
         if evaluator_type == "emds7":
             from dinosparse.evaluation import EMDS7Evaluator
             return EMDS7Evaluator(dataset_name, output_folder)
+        if evaluator_type == "nyu_depth":
+            from dinosparse.evaluation import MonoDepthEvaluator
+            return MonoDepthEvaluator(
+                dataset_name, output_folder,
+                min_depth=cfg.MODEL.MONO_DEPTH.MIN_DEPTH,
+                max_depth=cfg.MODEL.MONO_DEPTH.MAX_DEPTH,
+                median_align=cfg.MODEL.MONO_DEPTH.EVAL_MEDIAN_ALIGN,
+                crop=cfg.MODEL.MONO_DEPTH.EVAL_CROP,
+            )
+        if evaluator_type == "nyu_seg":
+            from dinosparse.evaluation import SemSegEvaluator
+            return SemSegEvaluator(dataset_name, output_folder)
         if len(evaluator_list) == 0:
             raise NotImplementedError(
                 "no Evaluator for the dataset {} with the type {}".format(
@@ -38,6 +50,27 @@ class Trainer(DefaultTrainer):
         if len(evaluator_list) == 1:
             return evaluator_list[0]
         return DatasetEvaluators(evaluator_list)
+
+    @classmethod
+    def build_train_loader(cls, cfg):
+        # 深度任务用 DepthDatasetMapper（处理 float 深度 GT 的同步增强）
+        # 其余任务（检测 emds7 / 分割 nyu_seg）用默认 DatasetMapper（分割 GT 已原生支持）
+        if cfg.MODEL.META_ARCHITECTURE == "MonoDepthMetaArch":
+            from dinosparse.data.build import build_detection_train_loader
+            from dinosparse.data.depth_dataset_mapper import DepthDatasetMapper
+            mapper = DepthDatasetMapper(cfg, True)
+            return build_detection_train_loader(cfg, mapper=mapper)
+        return super().build_train_loader(cfg)
+
+    @classmethod
+    def build_test_loader(cls, cfg, dataset_name):
+        # 评测时深度任务同样需要读 depth GT，故 test loader 也用 DepthDatasetMapper
+        if cfg.MODEL.META_ARCHITECTURE == "MonoDepthMetaArch":
+            from dinosparse.data.build import build_detection_test_loader
+            from dinosparse.data.depth_dataset_mapper import DepthDatasetMapper
+            mapper = DepthDatasetMapper(cfg, False)
+            return build_detection_test_loader(cfg, dataset_name, mapper=mapper)
+        return super().build_test_loader(cfg, dataset_name)
 
 
 def setup(args):

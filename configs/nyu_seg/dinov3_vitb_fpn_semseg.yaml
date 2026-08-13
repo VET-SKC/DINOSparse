@@ -1,0 +1,22 @@
+_BASE_: "../Base-DINOv3-vitb-FPN-SemSeg.yaml"
+MODEL:
+  WEIGHTS: ""
+  DINOv3:
+    FREEZE: True
+  BACKBONE:
+    FREEZE: False
+  SEM_SEG:
+    NUM_CLASSES: 40  # NYU labels40
+DATASETS:
+  TRAIN: ("nyu_seg_train",)
+  TEST: ("nyu_seg_test",)
+SOLVER:
+  IMS_PER_BATCH: 1
+  BASE_LR: 0.00005
+  STEPS: (6000, 8000)
+  MAX_ITER: 10000
+  WARMUP_ITERS: 500
+  CHECKPOINT_PERIOD: 5000
+TEST:
+  EVAL_PERIOD: 2000
+OUTPUT_DIR: "checkpoints/nyu_seg/dinov3_vitb_fpn_semseg"

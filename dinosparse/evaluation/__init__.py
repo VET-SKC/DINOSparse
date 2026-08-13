@@ -1,5 +1,7 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
 from .emds7_evaluation import EMDS7Evaluator
+from .depth_evaluation import MonoDepthEvaluator
+from .seg_evaluation import SemSegEvaluator
 from .evaluator import DatasetEvaluator, DatasetEvaluators, inference_context, inference_on_dataset
 from .testing import print_csv_format, verify_results
 

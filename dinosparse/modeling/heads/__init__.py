@@ -1,5 +1,6 @@
 from .head import DynamicHead, RCNNHead, DynamicConv
 from .loss import SetCriterion, HungarianMatcher
+from .fpn_decoder import FPNDecoder
 
 __all__ = [
     "DynamicHead",
@@ -7,4 +8,5 @@ __all__ = [
     "DynamicConv",
     "SetCriterion",
     "HungarianMatcher",
+    "FPNDecoder",
 ]
